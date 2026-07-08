@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>颱風假浮動賠率賭盤 Demo (GAS 即時同步版)</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f4f6f9; color: #333; max-width: 700px; margin: 40px auto; padding: 20px; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        h1, h2 { margin-top: 0; text-align: center; color: #1a73e8; }
+        .pool-info { display: flex; flex-wrap: wrap; justify-content: space-between; margin: 20px 0; padding: 15px; background: #e8f0fe; border-radius: 8px; text-align: center; gap: 10px; }
+        .pool-box { flex: 1; min-width: 120px; }
+        .pool-box h3 { margin: 0 0 5px 0; font-size: 14px; color: #666; }
+        .pool-box p { margin: 0; font-size: 18px; font-weight: bold; color: #1a73e8; }
+        .pool-box.total-main { border-right: 2px solid #cbd5e1; }
+        @media (max-width: 500px) { .pool-box.total-main { border-right: none; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; width: 100%; flex: none; } }
+        .odds-display { display: flex; gap: 12px; margin-bottom: 25px; flex-wrap: wrap; }
+        .odds-btn { flex: 1; min-width: 150px; padding: 15px; border: 2px solid #dee2e6; border-radius: 10px; background: white; cursor: pointer; text-align: center; transition: all 0.2s; }
+        .odds-btn.active { border-color: #1a73e8; background: #e8f0fe; }
+        .odds-btn h4 { margin: 0 0 8px 0; font-size: 18px; }
+        .odds-btn .odds-num { font-size: 24px; font-weight: bold; color: #d93025; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }
+        input[type="text"], input[type="number"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+        button.submit-btn { width: 100%; padding: 12px; background: #1a73e8; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button.submit-btn:hover { background: #1557b0; }
+        .loading { text-align: center; color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h1>🏆 颱風假浮動賠率賭盤 Demo</h1>
+        <p style="text-align:center; color:#666;">彩池制 (Pari-mutuel)：GAS 即時同步 API 版本</p>
+        
+        <div class="pool-info">
+            <div class="pool-box total-main">
+                <h3>總彩池 (Total)</h3>
+                <p id="total-pool">$ 0</p>
+            </div>
+            <div class="pool-box">
+                <h3>「放整天」總額</h3>
+                <p id="pool-a">$ 0</p>
+            </div>
+            <div class="pool-box">
+                <h3>「不放」總額</h3>
+                <p id="pool-b">$ 0</p>
+            </div>
+            <div class="pool-box">
+                <h3>「只放下午」總額</h3>
+                <p id="pool-c">$ 0</p>
+            </div>
+        </div>
+
+        <h2>目前即時賠率</h2>
+        <div id="loading-text" class="loading">正在連線 Google Apps Script 獲取最新即時賠率...</div>
+        
+        <div class="odds-display">
+            <div class="odds-btn" id="btn-choice-a" onclick="selectChoice('放整天')">
+                <h4>放整天</h4>
+                <div class="odds-num" id="odds-a">--</div>
+                <small style="color:#888;">(投1元預期拿回)</small>
+            </div>
+            <div class="odds-btn" id="btn-choice-b" onclick="selectChoice('不放')">
+                <h4>不放</h4>
+                <div class="odds-num" id="odds-b">--</div>
+                <small style="color:#888;">(投1元預期拿回)</small>
+            </div>
+            <div class="odds-btn" id="btn-choice-c" onclick="selectChoice('只放下午')">
+                <h4>只放下午</h4>
+                <div class="odds-num" id="odds-c">--</div>
+                <small style="color:#888;">(投1元預期拿回)</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>我要下注</h2>
+        <form id="betForm" onsubmit="handleBet(event)">
+            <div class="form-group">
+                <label for="username">姓名</label>
+                <input type="text" id="username" required placeholder="例如：堯">
+            </div>
+            
+            <div class="form-group">
+                <label>已選選項</label>
+                <input type="text" id="selected-display" readonly placeholder="請點選上方選項：放整天、不放、只放下午" style="background:#f0f0f0; font-weight:bold; color:#1a73e8;">
+                <input type="hidden" id="choice" required>
+            </div>
+
+            <div class="form-group">
+                <label for="amount">下注金額 ($)</label>
+                <input type="number" id="amount" min="1" required placeholder="請輸入下注金額">
+            </div>
+
+            <button type="submit" class="submit-btn">確認送出下注</button>
+        </form>
+    </div>
+
+    <script>
+        // ==================== [你的專屬配置區] ====================
+        const CONFIG = {
+            // 1. 你的 Google 表單 Form Response 網址（負責寫入）
+            formUrl: "https://docs.google.com/forms/d/e/1FAIpQLSdWgCpLb48MpA5lwdaBZTIRinee6FDLMirx9PwgvziA-w_cXg/formResponse", 
+            
+            // 2. 表單欄位的 entry ID
+            entryName: "entry.637974668",    // 姓名/暱稱
+            entryChoice: "entry.839441844",  // 選項
+            entryAmount: "entry.972355387",  // 金額
+            
+            // 3. 你剛剛部署好的 Google Apps Script 網頁應用程式網址（負責零延遲讀取！）
+            gasUrl: "https://script.google.com/macros/s/AKfycbxxPBnWurFioaOXvI2Uvu44EQnZZOukeVfaVi4OFfThdEkv2kx3MbD99KYcS2vq3vlj/exec" 
+        };
+        // =============================================================
+
+        let currentChoice = "";
+
+        // 選擇選項
+        function selectChoice(choice) {
+            currentChoice = choice;
+            document.getElementById('choice').value = choice;
+            document.getElementById('selected-display').value = choice;
+            
+            document.getElementById('btn-choice-a').classList.remove('active');
+            document.getElementById('btn-choice-b').classList.remove('active');
+            document.getElementById('btn-choice-c').classList.remove('active');
+            
+            if (choice === '放整天') document.getElementById('btn-choice-a').classList.add('active');
+            if (choice === '不放') document.getElementById('btn-choice-b').classList.add('active');
+            if (choice === '只放下午') document.getElementById('btn-choice-c').classList.add('active');
+        }
+
+        // 從全新的 GAS API 讀取 JSON 數據並計算賠率
+        async function fetchOddsData() {
+            try {
+                document.getElementById('loading-text').style.display = "block";
+                document.getElementById('loading-text').innerText = "正在同步最新賠率...";
+
+                // 直接呼叫你的 GAS 網址
+                const response = await fetch(CONFIG.gasUrl);
+                const items = await response.json(); // GAS 回傳的是乾淨的 JSON 陣列
+                
+                let totalA = 0; // 放整天
+                let totalB = 0; // 不放
+                let totalC = 0; // 只放下午
+
+                // 解析 JSON 陣列
+                items.forEach(item => {
+                    // 根據 GAS 的欄位名稱做精準比對 (choice 欄位)
+                    const choice = item.choice ? item.choice.toString().trim() : "";
+                    const amount = parseFloat(item.amount);
+                    
+                    if (!isNaN(amount)) {
+                        if (choice === '放整天') totalA += amount;
+                        else if (choice === '不放') totalB += amount;
+                        else if (choice === '只放下午') totalC += amount;
+                    }
+                });
+
+                const totalPool = totalA + totalB + totalC;
+                
+                // 計算賠率
+                let oddsA = totalA > 0 ? (totalPool / totalA).toFixed(2) : "1.00";
+                let oddsB = totalB > 0 ? (totalPool / totalB).toFixed(2) : "1.00";
+                let oddsC = totalC > 0 ? (totalPool / totalC).toFixed(2) : "1.00";
+
+                if(totalA === 0 && totalB === 0 && totalC === 0) { 
+                    oddsA = "3.00"; oddsB = "3.00"; oddsC = "3.00"; 
+                } else {
+                    if(totalA === 0) oddsA = "無限大";
+                    if(totalB === 0) oddsB = "無限大";
+                    if(totalC === 0) oddsC = "無限大";
+                }
+
+                // 更新 UI 數據
+                document.getElementById('total-pool').innerText = `$ ${totalPool}`;
+                document.getElementById('pool-a').innerText = `$ ${totalA}`;
+                document.getElementById('pool-b').innerText = `$ ${totalB}`;
+                document.getElementById('pool-c').innerText = `$ ${totalC}`;
+                document.getElementById('odds-a').innerText = oddsA;
+                document.getElementById('odds-b').innerText = oddsB;
+                document.getElementById('odds-c').innerText = oddsC;
+                document.getElementById('loading-text').style.display = "none";
+
+            } catch (error) {
+                console.error("無法獲取 GAS 數據:", error);
+                document.getElementById('loading-text').innerText = "即時同步失敗，請確認 GAS 是否設定為『任何人都可以存取』。";
+            }
+        }
+
+        // 提交下注資料到 Google 表單
+function handleBet(e) {
+    e.preventDefault();
+    
+    if(!currentChoice) {
+        alert("請先選擇要下注的選項！");
+        return;
+    }
+
+    const username = document.getElementById('username').value.trim();
+    const amountInput = document.getElementById('amount').value;
+    
+    // 💡 【新增：非數字與金額驗證邏輯】
+    // 1. 轉成浮點數檢查
+    const amount = parseFloat(amountInput);
+    
+    // 2. 檢查是否為 NaN、是否小於等於 0、或者是否包含小數點
+    if (isNaN(amount) || amount <= 0 || !Number.isInteger(amount)) {
+        alert("下注金額錯誤！請輸入大於 0 的正整數。");
+        document.getElementById('amount').focus(); // 自動幫使用者聚焦到金額欄位
+        return; // 💡 關鍵：直接 return，中斷執行，不讓資料送出給 Google 表單
+    }
+
+    // --- 以下為原本的發送邏輯 ---
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = CONFIG.formUrl;
+    form.target = 'hidden_iframe';
+
+    const fields = {
+        [CONFIG.entryName]: username,
+        [CONFIG.entryChoice]: currentChoice, 
+        [CONFIG.entryAmount]: amount // 這裡送出乾淨的數字
+    };
+
+    for (const key in fields) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = fields[key];
+        form.appendChild(input);
+    }
+
+    let iframe = document.getElementById('hidden_iframe');
+    if(!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = 'hidden_iframe';
+        iframe.name = 'hidden_iframe';
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+    }
+
+    document.body.appendChild(form);
+    form.submit();
+    
+    alert("下注成功！網頁將在 2 秒後重新整理，帶出最即時的浮動賠率。");
+    
+    setTimeout(() => {
+        document.getElementById('betForm').reset();
+        currentChoice = "";
+        document.getElementById('btn-choice-a').classList.remove('active');
+        document.getElementById('btn-choice-b').classList.remove('active');
+        document.getElementById('btn-choice-c').classList.remove('active');
+        fetchOddsData();
+        document.body.removeChild(form);
+    }, 2000);
+}
+
+        window.onload = () => {
+            fetchOddsData();
+            // 每 8 秒自動在背景重新整理一次
+            setInterval(fetchOddsData, 8000); 
+        };
+    </script>
+</body>
+</html>
